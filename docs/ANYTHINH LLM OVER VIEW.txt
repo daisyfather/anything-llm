@@ -1,0 +1,124 @@
+Tóm tắt tổng quan
+AnythingLLM là một ứng dụng AI “tất cả trong một” giúp tổ chức tài liệu, chia sẻ vào các “workspace” và trò chuyện với LLM thông qua ngữ cảnh riêng tư; dự án phục vụ người dùng cuối là các nhóm/đội muốn triển khai chatbot nội bộ nhiều tính năng, hỗ trợ đa mô hình và đa người dùng.
+
+Monorepo gồm frontend React, backend Express, dịch vụ thu thập tài liệu riêng và các mô-đun triển khai/tiện ích; mục tiêu là vận hành cả bản self-hosted lẫn managed.
+
+Phân tích kiến trúc phần mềm
+Kiểu kiến trúc: monolithic multi-tier trong một monorepo. Backend chính (server) và dịch vụ collector cùng chạy Express, chia sẻ ORM Prisma và các tiện ích; frontend là client SPA. Không tách vi dịch vụ độc lập hoàn toàn nhưng có hai tiến trình Node chuyên biệt cho xử lý tài liệu và API chính.
+
+Luồng dữ liệu chat quan trọng:
+
+Frontend gửi yêu cầu POST /api/workspace/:slug/stream-chat (SSE) cùng message/attachments.
+
+Endpoint xác thực, thiết lập SSE, kiểm tra quota người dùng, rồi gọi streamChatWithWorkspace để dựng ngữ cảnh.
+
+Luồng xử lý tạo UUID, kiểm tra slash command/agent, lấy connector LLM, chạy truy vấn vector (DocumentManager lấy tài liệu ghim + file đã parse, vector DB similarity, pinned doc filtering), gửi yêu cầu tới LLM và stream chunk response về client, đồng thời lưu lịch sử chat vào DB.
+
+Telemetry/EventLog ghi nhận để phục vụ thống kê và quota.
+
+Thành phần chính & quan hệ:
+
+Frontend (React/Vite) hiển thị UI, định tuyến, gọi API và SSE tới server.
+
+Server (Express API): endpoint quản lý hệ thống, workspace, chat, agent, embed, mobile, cộng đồng; sử dụng middleware, models (Prisma), utils (LLM/vector abstractions).
+
+Collector: dịch vụ Express độc lập xử lý upload/link/raw text, chuyển thành chunk tài liệu đưa vào storage/vector hoá.
+
+Jobs (Bree-based) quét documents, đồng bộ nguồn và dọn rác.
+
+Prisma ORM & SQLite làm store chính; có tùy chọn PostgreSQL.
+
+Vector providers & LLM providers chọn động qua factory trong utils/helpers.
+
+Sơ đồ kiến trúc (Mermaid):
+
+graph TD
+  Browser[React/Vite Frontend] -->|REST + SSE| API[Express Server]
+  API -->|Prisma ORM| SQL[(SQLite/PostgreSQL)]
+  API -->|Vector abstractions| VectorDB[(LanceDB/Pinecone/…)]
+  API -->|LLM connectors| LLMs[(OpenAI/Anthropic/...)]
+  API -->|Document ingestion jobs| Collector[Collector Service]
+  Collector -->|Parsed chunks| Storage[(Document Storage)]
+  Collector -->|API callbacks| API
+Phân tích cấu trúc thư mục
+frontend/: SPA React dùng Vite, chia modules theo context (AuthContext, pages, components). Entry main.jsx, App routing lazy-loading theo vai trò quyền hạn.
+
+server/: Express API với các thư mục endpoints, models, utils, jobs, middleware, storage. index.js đăng ký router /api và tải nhiều endpoint module riêng biệt.
+
+collector/: Express service xử lý file/link/raw text; chia thành processSingleFile, processLink, processRawText, middleware, utils, extensions để hỗ trợ plugin xử lý bổ sung.
+
+cloud-deployments, docker, extras, embed, browser-extension cung cấp hạ tầng triển khai và tích hợp phụ.
+
+Quy ước: đặt tên thư mục theo chức năng (endpoints, models, utils). File endpoint theo resource (chat.js, workspaces.js), model theo bảng Prisma. Frontend dùng alias @ (qua jsconfig) để import.
+
+Hệ sinh thái công nghệ
+Node.js ≥ 18 cho cả server và collector; Express làm web server; Body-parser/CORS cho middleware; Dotenv đọc cấu hình; Winston logger.
+
+Prisma ORM + SQLite (có tuỳ chọn PostgreSQL) cho dữ liệu quan hệ.
+
+LangChain & nhiều SDK LLM (OpenAI, Anthropic, Groq, TogetherAI, v.v.) + các vector DB client (LanceDB, Pinecone, Chroma, PGVector...).
+
+Collector dùng Puppeteer, Tesseract, Mammoth, pdf-parse, html-to-text để trích xuất nội dung đa định dạng.
+
+Frontend: React 18, React Router, React-Toastify, i18next, Tailwind/PostCSS (theo config).
+
+Jobs sử dụng Bree fork (@mintplex-labs/bree) và worker_threads để xử lý nền.
+
+Điểm bắt đầu & luồng thực thi
+Server: server/index.js load .env, khởi tạo logger, Express app, middleware (CORS, bodyParser), optional HTTP logger, WebSocket (express-ws), mount router /api, và tùy môi trường build trang static hoặc debug vector DB. Cuối cùng gọi bootHTTP hoặc bootSSL để listen.
+
+Collector: collector/index.js tương tự, đăng ký các route /process, /parse, /process-link, /process-raw-text, extension hooks, rồi listen(8888) sau khi dọn storage tạm.
+
+Frontend: frontend/src/main.jsx bootstrap React root, bọc Router, load App (StrictMode chỉ ở production). App.jsx cấu hình context providers, lazy routes và guard quyền hạn.
+
+Quản lý cấu hình & biến môi trường
+.env cho server chứa hàng loạt biến chọn LLM provider, embedding engine, vector DB, khoá JWT, HTTPS flag, cổng…; chia file per-env (.env.development).
+
+Frontend .env định nghĩa VITE_API_BASE tùy môi trường (local, Codespaces, production).
+
+Collector .env hiện chủ yếu bật logger, có thể mở rộng thêm biến riêng khi cần.
+
+Root script yarn setup:envs copy sẵn template .env cho từng module.
+
+Hướng dẫn cài đặt & chạy
+Chạy yarn setup ở root để cài dependencies từng phần, copy .env mẫu và chạy prisma generate/migrate/seed; sau đó chạy yarn dev:server, yarn dev:frontend, yarn dev:collector mỗi lệnh ở tab riêng (hoặc yarn dev:all).
+
+Môi trường sản xuất: yarn prod:server và yarn prod:frontend để build và start; vector DB và LLM config quyết định qua .env.
+
+Kiểm thử
+Bộ test dùng Jest ở cấp repo; yarn test chạy Jest.
+
+Hiện có ít test đơn vị (ví dụ server/__tests__/models/systemPromptVariables.test.js) mô phỏng Prisma và kiểm thử mở rộng biến prompt; thư mục test theo cấu trúc tương ứng với module được kiểm tra.
+
+Chưa thấy test cho collector/frontend; nên bổ sung thêm coverage khi mở rộng.
+
+Đánh giá & gợi ý onboarding
+Ưu điểm:
+
+Modular rõ ràng giữa API, collector, frontend; factory pattern cho LLM/vector giúp mở rộng dễ dàng.
+
+Dòng chảy chat chi tiết (DocumentManager, vector search, agent) cho phép tùy biến cao và logging/telemetry tích hợp sẵn.
+
+Hỗ trợ nhiều kênh triển khai và cấu hình qua .env template phong phú.
+
+Nhược điểm/điểm cần chú ý:
+
+Khối lượng logic lớn trong một số file (ví dụ streamChatWithWorkspace) khiến onboarding tốn thời gian; cân nhắc tách nhỏ hoặc bổ sung sơ đồ/README phụ.
+
+Số lượng biến môi trường lớn dễ gây sai cấu hình; nên lập bảng config tối thiểu.
+
+Tests hạn chế → khó đảm bảo regression cho thay đổi lớn.
+
+Lộ trình cho người mới:
+
+Đọc README để nắm sản phẩm và các service.
+
+Nghiên cứu server/index.js (entry) rồi endpoints/chat.js + utils/chats/stream.js để hiểu luồng chat chính.
+
+Xem server/utils/helpers/index.js để nắm các factory LLM/vector và quy ước config.
+
+Chuyển sang collector (collector/index.js, processSingleFile) nếu làm việc với ingestion.
+
+Cuối cùng đọc frontend App.jsx, pages/WorkspaceChat để hiểu UI gọi API.
+
+Khu vực phức tạp: logic agent/slash command trong utils/chats/stream, quản lý tài liệu pinned/parsed, và cấu hình vector/LLM (nhiều provider). Các thay đổi cần test tay kỹ do SSE và streaming.
