@@ -180,6 +180,10 @@ Mintplex Labs & the community maintain a number of deployment methods, scripts, 
 
 [Learn about vector caching](./server/storage/vector-cache/VECTOR_CACHE.md)
 
+## Private infrastructure configuration
+
+- [Direct connections to self-hosted Qdrant, LocalAI, and DataPower SSO](./docs/private-service-config.md)
+
 ## External Apps & Integrations
 
 _These are apps that are not maintained by Mintplex Labs, but are compatible with AnythingLLM. A listing here is not an endorsement._
